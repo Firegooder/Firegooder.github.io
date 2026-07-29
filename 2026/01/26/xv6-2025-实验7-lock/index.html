@@ -1,0 +1,203 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>xv6_2025_实验7_lock | huzayn's blog</title><meta name="author" content="huzayn"><meta name="copyright" content="huzayn"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#ffffff"><meta name="description" content="Memory allocator实验目标：优化内存分配器的并行性能，通过将单全局锁+单空闲链表的设计改为每CPU锁+每CPU空闲链表，减少多核环境下的锁竞争。 当前的瓶颈： 1234struct &#123;  struct spinlock lock;  struct run *freelist;&#125; kmem;  所有CPU共享同一个空闲链表和一个锁， 任何kalloc&#x2F;kf">
+<meta property="og:type" content="article">
+<meta property="og:title" content="xv6_2025_实验7_lock">
+<meta property="og:url" content="http://example.com/2026/01/26/xv6-2025-%E5%AE%9E%E9%AA%8C7-lock/index.html">
+<meta property="og:site_name" content="huzayn&#39;s blog">
+<meta property="og:description" content="Memory allocator实验目标：优化内存分配器的并行性能，通过将单全局锁+单空闲链表的设计改为每CPU锁+每CPU空闲链表，减少多核环境下的锁竞争。 当前的瓶颈： 1234struct &#123;  struct spinlock lock;  struct run *freelist;&#125; kmem;  所有CPU共享同一个空闲链表和一个锁， 任何kalloc&#x2F;kf">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="http://example.com/img/logo.png">
+<meta property="article:published_time" content="2026-01-26T11:39:36.000Z">
+<meta property="article:modified_time" content="2026-01-27T06:36:02.667Z">
+<meta property="article:author" content="huzayn">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="http://example.com/img/logo.png"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "xv6_2025_实验7_lock",
+  "url": "http://example.com/2026/01/26/xv6-2025-%E5%AE%9E%E9%AA%8C7-lock/",
+  "image": "http://example.com/img/logo.png",
+  "datePublished": "2026-01-26T11:39:36.000Z",
+  "dateModified": "2026-01-27T06:36:02.667Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "huzayn",
+      "url": "http://example.com"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/logo.png"><link rel="canonical" href="http://example.com/2026/01/26/xv6-2025-%E5%AE%9E%E9%AA%8C7-lock/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.3"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.12.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'xv6_2025_实验7_lock',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta name="generator" content="Hexo 8.1.1"></head><body><div class="bg-animation" id="web_bg" style="background-image: url(/img/20250104-P1021765.jpg);"></div><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/logo.png" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">14</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">0</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">0</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 归档</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 目录</span></a></div><div class="menus_item"><span class="site-page group"><i class="fa-fw fas fa-list"></i><span> 列表</span><i class="fas fa-chevron-down"></i></span><ul class="menus_item_child"><li><a class="site-page child" href="/music/"><i class="fa-fw fas fa-music"></i><span> 音乐</span></a></li><li><a class="site-page child" href="/movies/"><i class="fa-fw fas fa-video"></i><span> 电影</span></a></li></ul></div><div class="menus_item"><a class="site-page" href="/link/"><i class="fa-fw fas fa-link"></i><span> 友情链接</span></a></div><div class="menus_item"><a class="site-page" href="/about/"><i class="fa-fw fas fa-heart"></i><span> 关于我</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg" id="page-header" style="background-image: url(/img/P1054693_lab.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><img class="site-icon" src="/img/logo.png" alt="Logo"><span class="site-name">huzayn's blog</span></a><a class="nav-page-title" href="/"><span class="site-name">xv6_2025_实验7_lock</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 归档</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 目录</span></a></div><div class="menus_item"><span class="site-page group"><i class="fa-fw fas fa-list"></i><span> 列表</span><i class="fas fa-chevron-down"></i></span><ul class="menus_item_child"><li><a class="site-page child" href="/music/"><i class="fa-fw fas fa-music"></i><span> 音乐</span></a></li><li><a class="site-page child" href="/movies/"><i class="fa-fw fas fa-video"></i><span> 电影</span></a></li></ul></div><div class="menus_item"><a class="site-page" href="/link/"><i class="fa-fw fas fa-link"></i><span> 友情链接</span></a></div><div class="menus_item"><a class="site-page" href="/about/"><i class="fa-fw fas fa-heart"></i><span> 关于我</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">xv6_2025_实验7_lock</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-01-26T11:39:36.000Z" title="发表于 2026-01-26 19:39:36">2026-01-26</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-01-27T06:36:02.667Z" title="更新于 2026-01-27 14:36:02">2026-01-27</time></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="Memory-allocator"><a href="#Memory-allocator" class="headerlink" title="Memory allocator"></a>Memory allocator</h2><p>实验目标：优化内存分配器的并行性能，通过将单全局锁+单空闲链表的设计改为每CPU锁+每CPU空闲链表，减少多核环境下的锁竞争。</p>
+<p>当前的瓶颈：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">struct &#123;</span><br><span class="line">  struct spinlock lock;</span><br><span class="line">  struct run *freelist;</span><br><span class="line">&#125; kmem;</span><br></pre></td></tr></table></figure>
+
+<p>所有CPU共享同一个空闲链表和一个锁， 任何kalloc&#x2F;kfree操作都需要竞争这个全局锁</p>
+<p>解决方案：每个CPU操作自己的链表和锁</p>
+<p>打开kalloc.c,先修改数据结构</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">struct &#123;</span><br><span class="line">  struct spinlock lock;</span><br><span class="line">  struct run *freelist;</span><br><span class="line">&#125; kmem[NCPU];</span><br></pre></td></tr></table></figure>
+
+<p>初始化每个CPU锁</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">void</span><br><span class="line">kinit()</span><br><span class="line">&#123;</span><br><span class="line">  // 为每个CPU初始化锁</span><br><span class="line">  for(int i = 0; i &lt; NCPU; i++) &#123;</span><br><span class="line">    initlock(&amp;kmem[i].lock, &quot;kmem&quot;);</span><br><span class="line">  &#125;</span><br><span class="line">  freerange(end, (void*)PHYSTOP);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>修改kalloc</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br></pre></td><td class="code"><pre><span class="line">void *</span><br><span class="line">kalloc(void)</span><br><span class="line">&#123;</span><br><span class="line">  struct run *r;</span><br><span class="line">  int id;</span><br><span class="line"></span><br><span class="line">  // 安全获取当前CPU ID</span><br><span class="line">  push_off();</span><br><span class="line">  id = cpuid();</span><br><span class="line">  pop_off();</span><br><span class="line"></span><br><span class="line">  // 先尝试从当前CPU分配</span><br><span class="line">  acquire(&amp;kmem[id].lock);</span><br><span class="line">  r = kmem[id].freelist;</span><br><span class="line">  if(r) &#123;</span><br><span class="line">    kmem[id].freelist = r-&gt;next;</span><br><span class="line">    release(&amp;kmem[id].lock);</span><br><span class="line">    </span><br><span class="line">    if(r)</span><br><span class="line">      memset((char*)r, 5, PGSIZE); // fill with junk</span><br><span class="line">    return (void*)r;</span><br><span class="line">  &#125;</span><br><span class="line">  release(&amp;kmem[id].lock);</span><br><span class="line"></span><br><span class="line">  // 当前CPU链表空，从其他CPU偷取</span><br><span class="line">  for(int i = 0; i &lt; NCPU; i++) &#123;</span><br><span class="line">    if(i == id) continue;  // 跳过自己</span><br><span class="line">    </span><br><span class="line">    acquire(&amp;kmem[i].lock);</span><br><span class="line">    r = kmem[i].freelist;</span><br><span class="line">    if(r) &#123;</span><br><span class="line">      kmem[i].freelist = r-&gt;next;</span><br><span class="line">      release(&amp;kmem[i].lock);</span><br><span class="line">      </span><br><span class="line">      if(r)</span><br><span class="line">        memset((char*)r, 5, PGSIZE);</span><br><span class="line">      return (void*)r;</span><br><span class="line">    &#125;</span><br><span class="line">    release(&amp;kmem[i].lock);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  return 0;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>修改kfree</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line">void</span><br><span class="line">kfree(void *pa)</span><br><span class="line">&#123;</span><br><span class="line">  struct run *r;</span><br><span class="line"></span><br><span class="line">  if(((uint64)pa % PGSIZE) != 0 || (char*)pa &lt; end || (uint64)pa &gt;= PHYSTOP)</span><br><span class="line">    panic(&quot;kfree&quot;);</span><br><span class="line"></span><br><span class="line">  // Fill with junk to catch dangling refs.</span><br><span class="line">  memset(pa, 1, PGSIZE);</span><br><span class="line"></span><br><span class="line">  r = (struct run*)pa;</span><br><span class="line"></span><br><span class="line">   // 安全获取当前CPU ID</span><br><span class="line">  push_off();</span><br><span class="line">  int id = cpuid();</span><br><span class="line">  pop_off();</span><br><span class="line"></span><br><span class="line">  // 使用当前CPU的锁，而不是全局锁</span><br><span class="line">  acquire(&amp;kmem[id].lock);</span><br><span class="line">  r-&gt;next = kmem[id].freelist;</span><br><span class="line">  kmem[id].freelist = r;</span><br><span class="line">  release(&amp;kmem[id].lock);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>测试通过</p>
+<h2 id="Read-write-lock"><a href="#Read-write-lock" class="headerlink" title="Read-write lock"></a>Read-write lock</h2><p>本实验要实现读写自旋锁，以提高多核下的读取并发性能。主要要实现读模式：允许多个读者同时持有锁，同时禁止写者进入；写模式：只允许一个写者持有锁，禁止其他读者和写者进入。</p>
+<p>实验思路：在读写锁结构体中引入一把标准的自旋锁（<code>lk</code>）来严格保护 <code>readers</code>（读者数）、<code>writer</code>（写锁持有位）和 <code>pending_writers</code>（写者排队数）这三个状态变量；<strong>所有</strong>读写操作在检查或修改这些状态前必须先持有 <code>lk</code>。同时根据题目采用写者优先，写者在尝试获取锁前先增加 <code>pending_writers</code>，读者一旦发现有等待的写者便主动避让。</p>
+<p>下面开始写代码：</p>
+<p>首先在spinlock.h里修改</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">#ifdef LAB_LOCK</span><br><span class="line">// Reader-writer lock.</span><br><span class="line">struct rwspinlock &#123;</span><br><span class="line">  // 自旋锁，用来保护下面的 3 个计数器</span><br><span class="line">  struct spinlock lk; </span><br><span class="line">  </span><br><span class="line">  int readers;           // 读者数量</span><br><span class="line">  int writer;            // 写者是否持有 (0 或 1)</span><br><span class="line">  int pending_writers;   // 写者排队计数 (实现写者优先)</span><br><span class="line"></span><br><span class="line">  // 调试信息</span><br><span class="line">  char *name;</span><br><span class="line">  struct cpu *cpu;</span><br><span class="line">&#125;;</span><br><span class="line">#endif</span><br></pre></td></tr></table></figure>
+
+<p>然后修改spinlock.c</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">static void</span><br><span class="line">read_acquire_inner(struct rwspinlock *rwlk)</span><br><span class="line">&#123;</span><br><span class="line">  while(1) &#123;</span><br><span class="line">    acquire(&amp;rwlk-&gt;lk); // 1. 关门 (持有锁)</span><br><span class="line"></span><br><span class="line">    // 2. 检查：是否有写者持有？是否有写者排队？</span><br><span class="line">    if (rwlk-&gt;writer == 0 &amp;&amp; rwlk-&gt;pending_writers == 0) &#123;</span><br><span class="line">      rwlk-&gt;readers++;    // 进场</span><br><span class="line">      release(&amp;rwlk-&gt;lk); // 开门 (放锁)</span><br><span class="line">      return;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    // 3. 条件不满足，开门，并在外面自旋重试</span><br><span class="line">    release(&amp;rwlk-&gt;lk);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">static void</span><br><span class="line">read_release_inner(struct rwspinlock *rwlk)</span><br><span class="line">&#123;</span><br><span class="line">  acquire(&amp;rwlk-&gt;lk); // 关门</span><br><span class="line">  rwlk-&gt;readers--;    // 离场</span><br><span class="line">  release(&amp;rwlk-&gt;lk); // 开门</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line">static void</span><br><span class="line">write_acquire_inner(struct rwspinlock *rwlk)</span><br><span class="line">&#123;</span><br><span class="line">  // 1. 举手排队 (必须加锁修改)</span><br><span class="line">  acquire(&amp;rwlk-&gt;lk);</span><br><span class="line">  rwlk-&gt;pending_writers++;</span><br><span class="line">  release(&amp;rwlk-&gt;lk);</span><br><span class="line"></span><br><span class="line">  while(1) &#123;</span><br><span class="line">    acquire(&amp;rwlk-&gt;lk); // 关门</span><br><span class="line"></span><br><span class="line">    // 2. 检查：必须完全空闲 (无读 且 无写)</span><br><span class="line">    if (rwlk-&gt;readers == 0 &amp;&amp; rwlk-&gt;writer == 0) &#123;</span><br><span class="line">      rwlk-&gt;writer = 1;        // 抢占</span><br><span class="line">      rwlk-&gt;pending_writers--; // 取消排队</span><br><span class="line">      </span><br><span class="line">      rwlk-&gt;cpu = mycpu();</span><br><span class="line">      release(&amp;rwlk-&gt;lk);      // 开门</span><br><span class="line">      return;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    release(&amp;rwlk-&gt;lk); // 条件不满足，开门重试</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">static void</span><br><span class="line">write_release_inner(struct rwspinlock *rwlk)</span><br><span class="line">&#123;</span><br><span class="line">  acquire(&amp;rwlk-&gt;lk); // 关门</span><br><span class="line">  </span><br><span class="line">  rwlk-&gt;cpu = 0;</span><br><span class="line">  rwlk-&gt;writer = 0;   // 释放写状态</span><br><span class="line"></span><br><span class="line">  release(&amp;rwlk-&gt;lk); // 开门</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">void</span><br><span class="line">initrwlock(struct rwspinlock *rwlk)</span><br><span class="line">&#123;</span><br><span class="line">  rwlk-&gt;name = &quot;rwlock&quot;;</span><br><span class="line">  // 必须初始化内部的锁</span><br><span class="line">  initlock(&amp;rwlk-&gt;lk, &quot;rwlk_inner&quot;); </span><br><span class="line">  rwlk-&gt;readers = 0;</span><br><span class="line">  rwlk-&gt;writer = 0;</span><br><span class="line">  rwlk-&gt;pending_writers = 0;</span><br><span class="line">  rwlk-&gt;cpu = 0;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>本以为修改完成，但是结果却是这样</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">rwspinlock_test(0): 0</span><br><span class="line">rwspinlock_test(2): -1</span><br><span class="line">rwspinlock_test(1): 0</span><br><span class="line">rwspinlock_test(3): -1</span><br><span class="line">rwlktest: 2/4 CPUs succeeded</span><br></pre></td></tr></table></figure>
+
+<p>找了很久的原因，直到我把delay函数里的10000改为100000，才能通过</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">static uint</span><br><span class="line">delay()</span><br><span class="line">&#123;</span><br><span class="line">  static uint v;</span><br><span class="line">  for (int i = 0; i &lt; 100000; i++) &#123;</span><br><span class="line">    __atomic_fetch_add(&amp;v, 1, __ATOMIC_RELAXED);</span><br><span class="line">  &#125;</span><br><span class="line">  return __atomic_load_n(&amp;v, __ATOMIC_RELAXED);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>ai的解释：原有的 <code>delay</code> 时间过短（仅微秒级），无法覆盖宿主机几十毫秒的调度间隙，导致“读者”在“写者”被冻结期间误判为无人排队而抢先进入。增加 <code>delay</code> 的本质是<strong>用软件层面的等待时间换取物理层面的调度容错</strong>，强迫读者空转更久，从而保证即使写者被宿主机暂时挂起，也能在读者结束等待前“复活”并完成排队登记，消除了因双重调度延迟导致的逻辑误判。</p>
+<p>测试通过</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">rwspinlock_test(0): 0</span><br><span class="line">rwspinlock_test(1): 0</span><br><span class="line">rwspinlock_test(3): 0</span><br><span class="line">rwspinlock_test(2): 0</span><br><span class="line">rwlktest: 4/4 CPUs succeeded</span><br></pre></td></tr></table></figure>
+
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="http://example.com">huzayn</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="http://example.com/2026/01/26/xv6-2025-%E5%AE%9E%E9%AA%8C7-lock/">http://example.com/2026/01/26/xv6-2025-%E5%AE%9E%E9%AA%8C7-lock/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="http://example.com" target="_blank">huzayn's blog</a>！</span></div></div><div class="tag_share"><div class="post-share"><div class="social-share" data-image="/img/logo.png" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/01/27/xv6-%E5%AE%9E%E9%AA%8C8-file-system/" title="xv6_实验8_file_system"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">xv6_实验8_file_system</div></div><div class="info-2"><div class="info-item-1">Large files这个实验的核心目标是修改 xv6 的文件系统，引入 二级间接块 (Doubly-Indirect Block)，从而打破文件最大只能有 268 个块（约 268KB）的限制，使其支持约 65803 个块（约 65MB）。 原始结构：12 个直接块 + 1 个一级间接块 &#x3D; 13 个槽位。总计 12+256&#x3D;268 个块 新结构：11 个直接块 + 1 个一级间接块 + 1 个二级间接块 &#x3D; 13 个槽位。总共256*256+256+11 &#x3D;65803 个块 我们需要修改三个主要部分：头文件定义、映射函数 bmap 和截断函数 itrunc。 修改fs.h 12345678#define NDIRECT 11                // 从 12 改为 11#define NINDIRECT (BSIZE / sizeof(uint))// 修改 MAXFILE 的计算公式，增加二级间接块的支持#define MAXFILE (NDIRECT + NINDIRECT + NINDIRECT * NINDIRECT...</div></div></div></a><a class="pagination-related" href="/2026/01/20/xv6-2025-%E5%AE%9E%E9%AA%8C6-networking/" title="xv6_2025_实验6_networking"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">xv6_2025_实验6_networking</div></div><div class="info-2"><div class="info-item-1">实验一：NIC分层结构： 123应用层 (nettest.c)  ←→ 网络协议栈 (net.c) ←→ 设备驱动 (e1000.c)     用户程序                 协议处理                硬件控制        ←→ 硬件 (E1000网卡)       物理设备  主要是 e1000_transmit() 和e1000_recv() 要理解 DMA（直接内存访问）与 描述符环 (Descriptor Ring),理解ring中head和tail怎么移动的 理解 1234567891011// 描述符结构定义（位于e1000_dev.h）struct tx_desc &#123;    uint64 addr;       // 数据缓冲区地址    uint16 length;     // 数据长度    uint8 cso;         // 校验和偏移    uint8 cmd;         // 命令字段    uint8 status;      // 状态字段（重点！）    uint8 css;         // ...</div></div></div></a></nav></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/logo.png" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">huzayn</div><div class="author-info-description">抱最好的希望，做最坏的打算</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">14</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">0</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">0</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/Firegooder"><i class="fab fa-github"></i><span>Follow Me</span></a></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">----</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#Memory-allocator"><span class="toc-number">1.</span> <span class="toc-text">Memory allocator</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Read-write-lock"><span class="toc-number">2.</span> <span class="toc-text">Read-write lock</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/04/03/%E5%A6%82%E4%BD%95%E5%9C%A8qemu%E4%B8%AD%E5%BB%BA%E6%A8%A1CPU/" title="无标题">无标题</a><time datetime="2026-04-03T04:22:00.631Z" title="发表于 2026-04-03 12:22:00">2026-04-03</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/19/Linux%E5%86%85%E6%A0%B8_rwsem%E5%8F%8A%E8%AF%BB%E5%86%99%E6%9C%BA%E5%88%B6%E7%9A%84%E7%90%86%E8%A7%A3/" title="无标题">无标题</a><time datetime="2026-03-19T12:21:03.471Z" title="发表于 2026-03-19 20:21:03">2026-03-19</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/19/unix%E4%B8%ADfork%E5%87%BD%E6%95%B0%E7%9A%84%E7%90%86%E8%A7%A3/" title="无标题">无标题</a><time datetime="2026-03-19T11:30:58.962Z" title="发表于 2026-03-19 19:30:58">2026-03-19</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/01/29/xv6-2025-%E5%AE%9E%E9%AA%8C9-mmap/" title="xv6_2025_实验9_mmap">xv6_2025_实验9_mmap</a><time datetime="2026-01-29T07:24:01.000Z" title="发表于 2026-01-29 15:24:01">2026-01-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/01/27/xv6-%E5%AE%9E%E9%AA%8C8-file-system/" title="xv6_实验8_file_system">xv6_实验8_file_system</a><time datetime="2026-01-27T06:37:45.000Z" title="发表于 2026-01-27 14:37:45">2026-01-27</time></div></div></div></div></div></div></main><footer id="footer" style="background: transparent;"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2025 - 2026 By huzayn</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 8.1.1</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.3</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.3"></script><script src="/js/main.js?v=5.5.3"></script><div class="js-pjax"></div><script id="click-show-text" src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/dist/click-show-text.min.js" data-mobile="false" data-text="zayn" data-fontsize="15px" data-random="false" async="async"></script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>
